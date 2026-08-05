@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------
+# Full stack on PostgreSQL — mirrors the production topology locally.
+#
+#   docker compose up --build
+#   → web on http://localhost:8080, API proxied at /api
+#
+# Day-to-day development does not need this; `npm run dev` plus uvicorn on
+# SQLite is faster. Use compose to verify PostgreSQL-specific behaviour (JSONB,
+# native UUIDs, timezone-aware timestamps) before shipping.
+# ---------------------------------------------------------------------------
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: nlp
+      POSTGRES_PASSWORD: nlp_local_password
+      POSTGRES_DB: network_learning
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U nlp -d network_learning']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      ENVIRONMENT: development
+      DEBUG: 'false'
+      # Local-only value. Production supplies this from Azure Key Vault.
+      SECRET_KEY: local-development-secret-change-me-in-every-real-environment
+      DATABASE_URL: postgresql+asyncpg://nlp:nlp_local_password@db:5432/network_learning
+      CORS_ORIGINS: http://localhost:8080
+    depends_on:
+      db:
+        condition: service_healthy
+    # Migrations run at start-up so a fresh volume is usable immediately.
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '*'"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./frontend
+    ports:
+      - '8080:80'
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

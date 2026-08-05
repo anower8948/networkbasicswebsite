@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Network Learning Platform</title>
+    <meta
+      name="description"
+      content="Learn networking interactively — from OSI and subnetting through CCNA-level routing, switching and beyond."
+    />
+    <!-- Both values, so the browser paints native UI in the right palette
+         before React mounts and applies the stored preference. -->
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <script>
+      /*
+       * Applies the saved theme before first paint.
+       *
+       * This must be inline and synchronous: any deferred script would run
+       * after the browser has already painted the light-theme body, producing a
+       * white flash for dark-theme users on every page load.
+       */
+      (function () {
+        try {
+          var stored = localStorage.getItem('nlp-theme') || 'system';
+          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var isDark = stored === 'dark' || (stored === 'system' && prefersDark);
+          if (isDark) document.documentElement.classList.add('dark');
+          document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+        } catch (e) {
+          /* Private browsing can block localStorage; the light default is fine. */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,75 @@
+[project]
+name = "nlp-backend"
+version = "0.1.0"
+description = "Network Learning Platform — FastAPI backend"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "email-validator>=2.2.0",
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14.0",
+    "aiosqlite>=0.20.0",
+    "asyncpg>=0.30.0",
+    "greenlet>=3.1.0",
+    "pyjwt>=2.10.0",
+    "argon2-cffi>=23.1.0",
+    "python-multipart>=0.0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.28.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+]
+# Long-lived process managers for the deployments that do not use the
+# container image: gunicorn on a VPS, Passenger on cPanel.
+server = [
+    "gunicorn>=23.0.0",
+]
+# cPanel runs Python apps under Passenger, which speaks WSGI; this bridges the
+# ASGI application onto it. See infra/cpanel/passenger_wsgi.py for the cost.
+cpanel = [
+    "a2wsgi>=1.10.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
+ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic
+
+[tool.ruff.lint.per-file-ignores]
+# Alembic writes these; reformatting them would obscure `alembic check` diffs.
+"alembic/versions/*.py" = ["E501"]
+# Fixtures and endpoint tests read better with the occasional long literal.
+"tests/*" = ["E501"]
+# Authored lesson prose. Wrapping sentences to a code column would fragment
+# the writing and make editorial diffs unreadable.
+"app/seeds/*.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+disallow_untyped_defs = true
+ignore_missing_imports = true

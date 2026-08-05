@@ -1,0 +1,70 @@
+# ---------------------------------------------------------------------------
+# systemd unit for the API.
+#
+#   sudo cp nlp-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now nlp-api
+#
+# Configuration lives in /etc/nlp/api.env (mode 0640, root:nlp) — not in this
+# unit, which is world-readable.
+# ---------------------------------------------------------------------------
+
+[Unit]
+Description=Network Learning Platform API
+Documentation=https://github.com/your-org/networkbasicwebsite
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=nlp
+Group=nlp
+WorkingDirectory=/opt/nlp/backend
+EnvironmentFile=/etc/nlp/api.env
+
+# Workers: 2×cores+1 is the usual starting point. The workload is IO-bound
+# (database, no CPU-heavy request path), so err on the higher side and measure.
+ExecStart=/opt/nlp/venv/bin/gunicorn app.main:app \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --workers 4 \
+    --bind 127.0.0.1:8000 \
+    --forwarded-allow-ips 127.0.0.1 \
+    --access-logfile - \
+    --error-logfile - \
+    --graceful-timeout 30 \
+    --timeout 60
+
+# Reload on SIGHUP: `systemctl reload nlp-api` re-execs workers one at a time,
+# so a configuration change costs no dropped requests.
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+Restart=always
+RestartSec=5
+
+# ---- Sandboxing ---------------------------------------------------------
+# The service needs to read its own code and talk to the database. Everything
+# else is denied, so a compromised process has very little reachable surface.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+# Only these two paths are writable, and only one of them by design.
+ReadWritePaths=/var/log/nlp
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

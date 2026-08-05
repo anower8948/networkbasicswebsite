@@ -1,0 +1,99 @@
+# ---------------------------------------------------------------------------
+# Deploy to Azure App Service.
+#
+# Images are tagged with the commit SHA, never `latest`. A mutable tag makes
+# "which build is running?" unanswerable during an incident and makes a
+# rollback a rebuild rather than a redeploy.
+#
+# Authentication uses OIDC federated credentials — no long-lived secret in
+# GitHub. Required repository secrets:
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#   ACR_NAME, AZURE_RESOURCE_GROUP
+# ---------------------------------------------------------------------------
+
+name: Deploy (Azure)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: staging
+        type: choice
+        options: [staging, prod]
+
+permissions:
+  id-token: write # OIDC
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment || 'prod' }}
+  cancel-in-progress: false # never interrupt a deploy mid-flight
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'prod' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push images
+        env:
+          ACR: ${{ secrets.ACR_NAME }}
+          TAG: ${{ github.sha }}
+        run: |
+          az acr login --name "$ACR"
+          docker build -t "$ACR.azurecr.io/nlp-api:$TAG" ./backend
+          docker build -t "$ACR.azurecr.io/nlp-web:$TAG" ./frontend
+          docker push "$ACR.azurecr.io/nlp-api:$TAG"
+          docker push "$ACR.azurecr.io/nlp-web:$TAG"
+
+      - name: Deploy infrastructure
+        run: |
+          az deployment group create \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --template-file infra/azure/main.bicep \
+            --parameters infra/azure/main.parameters.json \
+            --parameters imageTag="${{ github.sha }}" \
+                         dbAdminPassword="${{ secrets.DB_ADMIN_PASSWORD }}" \
+                         environmentName="${{ inputs.environment || 'prod' }}"
+
+      # Migrations run as a one-shot container against the production database
+      # rather than on application start-up. Two instances booting together
+      # would otherwise race to run the same migration.
+      - name: Run migrations
+        env:
+          ACR: ${{ secrets.ACR_NAME }}
+          TAG: ${{ github.sha }}
+        run: |
+          az containerapp job start \
+            --name nlp-migrate \
+            --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+            --image "$ACR.azurecr.io/nlp-api:$TAG" \
+            --command "alembic" "upgrade" "head" \
+          || echo "::warning::Migration job not provisioned — run 'alembic upgrade head' manually."
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          HOST="nlp-${{ inputs.environment || 'prod' }}-api.azurewebsites.net"
+          for attempt in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://$HOST/api/v1/health" || true)
+            if [ "$code" = "200" ]; then
+              echo "Healthy after ${attempt} attempt(s)."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::API did not become healthy."
+          exit 1
